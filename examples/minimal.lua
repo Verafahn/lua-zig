@@ -1,3 +1,5 @@
+---@diagnostic disable: undefined-global
+
 local squares = {}
 for i = 1, 4 do
     squares[i] = i * i
