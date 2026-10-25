@@ -31,11 +31,11 @@ pub fn build(b: *std.Build) void {
     });
     translator.addIncludePath(lua_lib.getEmittedIncludeTree());
 
-    // Keep only the public Lua API in the module exposed to users.
+    // Keep only the public Lua API in an internal module.
     const filter = b.addExecutable(.{
         .name = "lua_filter",
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/filter.zig"),
+            .root_source_file = b.path("src/bin/filter.zig"),
             .target = b.graph.host,
             .optimize = .safe,
             .imports = &.{
@@ -46,12 +46,22 @@ pub fn build(b: *std.Build) void {
     const run_filter = b.addRunArtifact(filter);
     const lua_module_file = run_filter.addOutputFileArg2("lua.zig", .{});
 
-    const lua_module = b.addModule("lua", .{
+    const bindings = b.createModule(.{
         .root_source_file = lua_module_file,
         .target = target,
         .optimize = optimize,
         .imports = &.{
             .{ .name = "lua.hpp", .module = translator.mod },
+        },
+    });
+
+    // Public entry point: root.zig re-exports the generated bindings as `lua`.
+    const lua_module = b.addModule("lua", .{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "lua", .module = bindings },
         },
     });
 

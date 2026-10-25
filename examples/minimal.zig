@@ -9,7 +9,7 @@
 //! resulting global.
 
 const std = @import("std");
-const lua = @import("lua");
+const lua = @import("lua").lua;
 
 /// Host function exposed to Lua as `host_greeting()`.
 fn hostGreeting(L: ?*lua.lua_State) callconv(.c) c_int {

@@ -1,6 +1,6 @@
 # Lua on Zig
 
-Zig build for Lua 5.5.1. Lua is pulled from `build.zig.zon` as a package dependency; the build produces a static `liblua`, the standalone `lua` and `luac` programs, installed headers whose `luaconf.h` reflects the selected configuration, Zig bindings generated with translate-c from those headers, and an embedding example. Requires Zig 0.17.0+ and no system Lua installation.
+Zig build for Lua 5.5.1. Lua is pulled from `build.zig.zon` as a package dependency; the build produces a static `liblua`, the standalone `lua` and `luac` programs, installed headers whose `luaconf.h` reflects the selected configuration, Zig bindings generated with translate-c from those headers, and an embedding example. The bindings are exposed through a single public module (`lua`, rooted at `src/root.zig`). Requires Zig 0.17.0+ and no system Lua installation.
 
 ```sh
 zig build                              # install liblua, lua, luac, headers
@@ -87,7 +87,7 @@ exe.root_module.linkLibrary(lua.artifact("lua"));
 exe.root_module.addImport("lua", lua.module("lua"));
 ```
 
-`artifact("lua")` is the static library, `artifact("luac")` the compiler, and `module("lua")` the generated Zig bindings. The installed `lua` executable is deliberately not an artifact, keeping `artifact("lua")` unambiguous.
+`artifact("lua")` is the static library, `artifact("luac")` the compiler, and `module("lua")` the public facade (`src/root.zig`), which re-exports the generated bindings as `lua` (use `@import("lua").lua`). The installed `lua` executable is deliberately not an artifact, keeping `artifact("lua")` unambiguous.
 
 ## Embedding
 
@@ -95,7 +95,7 @@ exe.root_module.addImport("lua", lua.module("lua"));
 
 ```zig
 const std = @import("std");
-const lua = @import("lua");
+const lua = @import("lua").lua;
 
 fn hostGreeting(L: ?*lua.lua_State) callconv(.c) c_int {
     const state = L orelse return 0;
@@ -125,14 +125,15 @@ fn run() !void {
 }
 ```
 
-`src/filter.zig` filters the translate-c output down to the public API. Translation runs at build time against the installed headers (including the generated `luaconf.h`), so `lua_Integer`, `lua_Number`, and other configuration-dependent declarations always match the compiled library. translate-c's `luaL_dostring` output is not type-correct (the macro `NULL` becomes `?*anyopaque`), hence the explicit `luaL_loadstring` + `lua_pcallk` above.
+`src/bin/filter.zig` generates the bindings module, and `src/root.zig` is the only public entry point, re-exporting it as `lua`. Translation runs at build time against the installed headers (including the generated `luaconf.h`), so `lua_Integer`, `lua_Number`, and other configuration-dependent declarations always match the compiled library. translate-c's `luaL_dostring` output is not type-correct (the macro `NULL` becomes `?*anyopaque`), hence the explicit `luaL_loadstring` + `lua_pcallk` above.
 
 ## Layout
 
 ```text
 build.zig             project entry: target/optimize, translate-c bindings, example
 build/                Lua C build: sources, options, flags, platforms, install, steps
-src/filter.zig        filters translate-c output to the public API
+src/root.zig          public module entry, re-exports bindings as `lua`
+src/bin/filter.zig    emits the public API subset of the translate-c output
 examples/minimal.zig  embedding example
 ```
 
