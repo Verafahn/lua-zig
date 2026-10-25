@@ -26,15 +26,7 @@ pub fn main(init: std.process.Init) !void {
     state.pushCFunction(hostGreeting);
     state.setGlobal("host_greeting");
 
-    var result = try state.evalString(allocator,
-        \\local squares = {}
-        \\for i = 1, 4 do
-        \\    squares[i] = i * i
-        \\end
-        \\return string.format(
-        \\    "Hello from %s; interpreter: %s; squares: %s",
-        \\    host_greeting(), _VERSION, table.concat(squares, ", "))
-    );
+    var result = try state.evalString(allocator, @embedFile("minimal.lua"));
     defer result.deinit(allocator);
 
     try stdout.print("{s}\n", .{result.asString().?});
