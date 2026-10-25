@@ -1,6 +1,6 @@
 # Lua on Zig
 
-Zig build for Lua 5.5.1. Lua is pulled from `build.zig.zon` as a package dependency; the build produces a static `liblua`, the standalone `lua` and `luac` programs, installed headers whose `luaconf.h` reflects the selected configuration, a generated Zig bindings module, and an embedding example. Requires Zig 0.17.0+ and no system Lua installation.
+Zig build for Lua 5.5.1. Lua is pulled from `build.zig.zon` as a package dependency; the build produces a static `liblua`, the standalone `lua` and `luac` programs, installed headers whose `luaconf.h` reflects the selected configuration, Zig bindings generated with translate-c from those headers, and an embedding example. Requires Zig 0.17.0+ and no system Lua installation.
 
 ```sh
 zig build                              # install liblua, lua, luac, headers
@@ -32,7 +32,7 @@ The installed `luaconf.h` is a generated wrapper that applies the selected optio
 
 Standard Zig options: `-Dtarget`, `-Dcpu`, `-Dofmt`, `-Doptimize={debug,safe,fast,small}`, `-Ddynamic-linker`.
 
-Lua options map to `luaconf.h` and are applied both to the C build and to the installed `luaconf.h`:
+Lua options map to `luaconf.h` and are applied to the C build, the installed `luaconf.h`, and therefore the generated bindings:
 
 | Option | Macro | Default | Effect |
 | --- | --- | --- | --- |
@@ -125,15 +125,14 @@ fn run() !void {
 }
 ```
 
-`src/lua.zig` is checked-in translate-c output; `src/filter.zig` filters it into the generated `lua` module. The checked-in bindings use `LUA_32BITS` (`lua_Integer = c_int`, `lua_Number = f32`): build with `-Dlua-32bits=true` or regenerate them before calling numeric APIs. Their `luaL_dostring` translation is unusable (a macro `NULL` becomes `?*anyopaque`), hence the explicit `luaL_loadstring` + `lua_pcallk` above.
+`src/filter.zig` filters the translate-c output down to the public API. Translation runs at build time against the installed headers (including the generated `luaconf.h`), so `lua_Integer`, `lua_Number`, and other configuration-dependent declarations always match the compiled library. translate-c's `luaL_dostring` output is not type-correct (the macro `NULL` becomes `?*anyopaque`), hence the explicit `luaL_loadstring` + `lua_pcallk` above.
 
 ## Layout
 
 ```text
-build.zig             project entry: target/optimize, bindings, example
+build.zig             project entry: target/optimize, translate-c bindings, example
 build/                Lua C build: sources, options, flags, platforms, install, steps
-src/filter.zig        public API filter
-src/lua.zig           checked-in translate-c bindings
+src/filter.zig        filters translate-c output to the public API
 examples/minimal.zig  embedding example
 ```
 

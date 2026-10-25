@@ -1,5 +1,5 @@
 const std = @import("std");
-const lua = @import("lua.zig");
+const lua = @import("lua.hpp");
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
