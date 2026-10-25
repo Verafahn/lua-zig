@@ -13,7 +13,7 @@ fn hostGreeting(raw: ?*lua.RawState) callconv(.c) c_int {
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
-    const allocator = init.arena.allocator();
+    const gpa = init.gpa;
 
     var stdout_buffer: [1024]u8 = undefined;
     var stdout_writer = std.Io.File.stdout().writer(io, &stdout_buffer);
@@ -26,8 +26,8 @@ pub fn main(init: std.process.Init) !void {
     state.pushCFunction(hostGreeting);
     state.setGlobal("host_greeting");
 
-    var result = try state.evalString(allocator, @embedFile("minimal.lua"));
-    defer result.deinit(allocator);
+    var result = try state.evalString(gpa, @embedFile("minimal.lua"));
+    defer result.deinit(gpa);
 
     try stdout.print("{s}\n", .{result.asString().?});
     try stdout.flush();
