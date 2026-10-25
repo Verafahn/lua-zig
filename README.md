@@ -108,7 +108,7 @@ The raw generated C API remains available as `lua.c` for anything not covered by
 
 ```zig
 const std = @import("std");
-const lua = @import("lua").lua;
+const lua = @import("lua");
 
 fn hostGreeting(raw: ?*lua.RawState) callconv(.c) c_int {
     var state = lua.State.wrap(raw orelse return 0);
