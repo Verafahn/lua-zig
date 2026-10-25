@@ -1,11 +1,11 @@
 # Lua on Zig
 
-Zig build for Lua 5.5.1. Lua is pulled from `build.zig.zon` as a package dependency; the build produces a static `liblua`, the standalone `lua` and `luac` programs, installed headers whose `luaconf.h` reflects the selected configuration, Zig bindings generated with translate-c from those headers, and an embedding example. The bindings are exposed through a single public module (`lua`, rooted at `src/root.zig`). Requires Zig 0.17.0+ and no system Lua installation.
+Zig build for Lua 5.5.1. Lua is pulled from `build.zig.zon` as a package dependency; the build produces a static `liblua`, the standalone `lua` and `luac` programs, installed headers whose `luaconf.h` reflects the selected configuration, Zig bindings generated with translate-c from those headers, and an embedding example. The bindings are wrapped in an idiomatic Zig API (`State`, `Table`, `Function`, `Value`, ...) exposed through a single public module (`lua`, rooted at `src/root.zig`) that links Lua and libc automatically. Requires Zig 0.17.0+ and no system Lua installation.
 
 ```sh
 zig build                              # install liblua, lua, luac, headers
 zig build uninstall                    # remove installed files
-zig build test                         # runs `lua -v`
+zig build test                         # C smoke test + Zig wrapper tests
 zig build run -- -e 'print(_VERSION)'  # extra args are passed to the interpreter
 zig build run -- script.lua
 zig build exp                          # build and run the embedding example
@@ -82,12 +82,25 @@ const lua = b.dependency("lua", .{
     .@"lua-32bits" = true, // any Lua option is valid here
 });
 
-exe.root_module.link_libc = true;
-exe.root_module.linkLibrary(lua.artifact("lua"));
 exe.root_module.addImport("lua", lua.module("lua"));
 ```
 
-`artifact("lua")` is the static library, `artifact("luac")` the compiler, and `module("lua")` the public facade (`src/root.zig`), which re-exports the generated bindings as `lua` (use `@import("lua").lua`). The installed `lua` executable is deliberately not an artifact, keeping `artifact("lua")` unambiguous.
+`module("lua")` links liblua and libc automatically; no `linkLibrary` call is needed. `artifact("lua")` remains available for C interop, and `artifact("luac")` is the compiler. The installed `lua` executable is deliberately not an artifact, keeping `artifact("lua")` unambiguous.
+
+## Zig API
+
+The public module exposes a high-level wrapper under `@import("lua").lua`:
+
+| Type | Purpose |
+| --- | --- |
+| `State` | interpreter: stack, globals, loading/calls, GC, registry refs, host helpers |
+| `Table` | registry-backed table handle: get/set, typed getters, iteration, metatables |
+| `Function` | callable handle; arguments/results use the state stack |
+| `Userdata` | userdata handle with typed pointer/byte access |
+| `Thread` | coroutine handle: create, status, `resumeCoroutine` |
+| `Value` | owned value union (strings copied; handles keep registry refs) |
+
+The raw generated C API remains available as `lua.c` for anything not covered by the wrapper. Handles own a registry reference (`clone`/`deinit`); `Value` owns its string or handle payload, with `takeString`/`takeTable`/`takeFunction`/`takeUserdata`/`takeThread` for moving handles out before `deinit`.
 
 ## Embedding
 
@@ -97,43 +110,40 @@ exe.root_module.addImport("lua", lua.module("lua"));
 const std = @import("std");
 const lua = @import("lua").lua;
 
-fn hostGreeting(L: ?*lua.lua_State) callconv(.c) c_int {
-    const state = L orelse return 0;
-    _ = lua.lua_pushstring(state, "Zig");
+fn hostGreeting(raw: ?*lua.RawState) callconv(.c) c_int {
+    var state = lua.State.wrap(raw orelse return 0);
+    state.pushLiteral("Zig");
     return 1;
 }
 
-fn run() !void {
-    const L = lua.luaL_newstate() orelse return error.OutOfMemory;
-    defer lua.lua_close(L);
-    lua.luaL_openlibs(L);
+fn run(allocator: std.mem.Allocator) !void {
+    var state = try lua.State.create();
+    defer state.deinit();
+    state.openLibs();
+    state.register("host_greeting", hostGreeting);
 
-    lua.lua_pushcfunction(L, hostGreeting);
-    lua.lua_setglobal(L, "host_greeting");
-
-    const chunk =
-        \\result = string.format("%s via %s", _VERSION, host_greeting())
-    ;
-    if (lua.luaL_loadstring(L, chunk.ptr) != 0 or
-        lua.lua_pcallk(L, 0, lua.LUA_MULTRET, 0, 0, null) != 0) return error.LuaError;
-
-    _ = lua.lua_getglobal(L, "result");
-    var len: usize = 0;
-    const result = lua.lua_tolstring(L, -1, &len);
-    if (result == null) return error.MissingResult;
-    std.debug.print("{s}\n", .{result[0..len]});
+    var result = try state.evalString(allocator,
+        \\return string.format("%s via %s", host_greeting(), _VERSION)
+    );
+    defer result.deinit(allocator);
+    std.debug.print("{s}\n", .{result.asString().?});
 }
 ```
 
-`src/bin/filter.zig` generates the bindings module, and `src/root.zig` is the only public entry point, re-exporting it as `lua`. Translation runs at build time against the installed headers (including the generated `luaconf.h`), so `lua_Integer`, `lua_Number`, and other configuration-dependent declarations always match the compiled library. translate-c's `luaL_dostring` output is not type-correct (the macro `NULL` becomes `?*anyopaque`), hence the explicit `luaL_loadstring` + `lua_pcallk` above.
+`src/bin/filter.zig` generates the private C-API module; `src/root.zig` is the only public entry point, re-exporting the wrapper. Translation runs at build time against the installed headers (including the generated `luaconf.h`), so numeric types and other configuration-dependent declarations always match the compiled library.
 
 ## Layout
 
 ```text
 build.zig             project entry: target/optimize, translate-c bindings, example
 build/                Lua C build: sources, options, flags, platforms, install, steps
-src/root.zig          public module entry, re-exports bindings as `lua`
-src/bin/filter.zig    emits the public API subset of the translate-c output
+src/root.zig          public module: re-exports the wrapper as `lua`
+src/lua.zig           State, Value, Ref, errors, stack/global/call/GC API
+src/lua/table.zig     Table handle, typed access, iteration
+src/lua/function.zig  Function handle, calls
+src/lua/userdata.zig  Userdata handle
+src/lua/thread.zig    Coroutine handle, resume
+src/bin/filter.zig    emits the private C API subset
 examples/minimal.zig  embedding example
 ```
 

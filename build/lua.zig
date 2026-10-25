@@ -5,14 +5,21 @@ const flags = @import("flags.zig");
 const platform = @import("platform.zig");
 const sources = @import("sources.zig");
 
+/// Build products and steps for Lua itself.
+pub const Artifacts = struct {
+    lib: *std.Build.Step.Compile,
+    lua_exe: *std.Build.Step.Compile,
+    /// `lua -v`, the upstream Makefile's smoke test.
+    c_test: *std.Build.Step.Run,
+};
+
 /// Adds everything needed to build Lua: liblua, the stand-alone `lua` and
-/// `luac` programs, installed headers, and the `run`/`test` steps. Returns the
-/// `liblua` artifact so callers (e.g. the embedding example) can link it.
+/// `luac` programs, installed headers, and the `run` step.
 pub fn build(
     b: *std.Build,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.Optimize,
-) *std.Build.Step.Compile {
+) Artifacts {
     const options = config.read(b);
 
     const lua_dep = b.dependency("lua", .{});
@@ -45,8 +52,17 @@ pub fn build(
     });
     b.installArtifact(luac_exe);
 
-    addSteps(b, lua_exe);
-    return lua_lib;
+    addRunStep(b, lua_exe);
+
+    const c_test = b.addRunArtifact(lua_exe);
+    c_test.addArg("-v");
+    c_test.skip_foreign_checks = true;
+
+    return .{
+        .lib = lua_lib,
+        .lua_exe = lua_exe,
+        .c_test = c_test,
+    };
 }
 
 fn addLibrary(
@@ -145,18 +161,11 @@ fn installInterpreter(
     }
 }
 
-fn addSteps(b: *std.Build, lua_exe: *std.Build.Step.Compile) void {
+fn addRunStep(b: *std.Build, lua_exe: *std.Build.Step.Compile) void {
     const run_cmd = b.addRunArtifact(lua_exe);
     run_cmd.addPassthruArgs();
     const run_step = b.step("run", "Run the Lua stand-alone interpreter");
     run_step.dependOn(&run_cmd.step);
-
-    // Mirrors `make test`, which executes `./lua -v`.
-    const test_cmd = b.addRunArtifact(lua_exe);
-    test_cmd.addArg("-v");
-    test_cmd.skip_foreign_checks = true;
-    const test_step = b.step("test", "Run the stand-alone interpreter's version check");
-    test_step.dependOn(&test_cmd.step);
 }
 
 /// Installs a generated luaconf.h that applies the selected options and then

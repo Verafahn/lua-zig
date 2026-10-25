@@ -12,7 +12,8 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const lua_lib = lua.build(b, target, optimize);
+    const lua_build = lua.build(b, target, optimize);
+    const lua_lib = lua_build.lib;
 
     // Translate the installed headers, including the generated luaconf.h, so
     // the bindings always match the configuration the library was built with.
@@ -55,26 +56,27 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    // Public entry point: root.zig re-exports the generated bindings as `lua`.
+    // Public entry point: root.zig re-exports the high-level wrapper as `lua`.
     const lua_module = b.addModule("lua", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
-            .{ .name = "lua", .module = bindings },
+            .{ .name = "ffi", .module = bindings },
         },
     });
+    // Consumers get the Lua library without linking it themselves.
+    lua_module.linkLibrary(lua_lib);
+    lua_module.link_libc = true;
 
     const example_module = b.createModule(.{
         .root_source_file = b.path("examples/minimal.zig"),
         .target = target,
         .optimize = optimize,
-        .link_libc = true,
         .imports = &.{
             .{ .name = "lua", .module = lua_module },
         },
     });
-    example_module.linkLibrary(lua_lib);
 
     const example = b.addExecutable(.{
         .name = "exp-minimal",
@@ -83,4 +85,12 @@ pub fn build(b: *std.Build) void {
     const run_example = b.addRunArtifact(example);
     const example_step = b.step("exp", "Build and run the minimal embedding example");
     example_step.dependOn(&run_example.step);
+
+    const lua_tests = b.addTest(.{ .root_module = lua_module });
+    const run_lua_tests = b.addRunArtifact(lua_tests);
+    run_lua_tests.skip_foreign_checks = true;
+
+    const test_step = b.step("test", "Run Lua and Zig wrapper tests");
+    test_step.dependOn(&lua_build.c_test.step);
+    test_step.dependOn(&run_lua_tests.step);
 }
