@@ -1,8 +1,8 @@
 # Lua on Zig
 
-Zig build for Lua 5.5.1. Lua is pulled from `build.zig.zon` as a package dependency; the build produces a static `liblua`, the standalone `lua` and `luac` programs, installed headers whose `luaconf.h` reflects the selected configuration, Zig bindings generated with translate-c from those headers, and an embedding example.
+A Zig build for Lua 5.5.1. Lua is fetched as a package dependency from `build.zig.zon`. The build produces a static `liblua`, the standalone `lua` and `luac` executables, installed headers (with a generated `luaconf.h` that reflects the selected configuration), Zig bindings generated via translate-c from those headers, and an embedding example.
 
-The bindings are wrapped in an idiomatic Zig API (`State`, `Table`, `Function`, `Value`, ...) exposed through a single public module (`lua`, rooted at `src/root.zig`) that links Lua and libc automatically. Requires Zig 0.17.0+ and no system Lua installation.
+The bindings are wrapped in an idiomatic Zig API (`State`, `Table`, `Function`, `Value`, ...) and exposed through a single public module (`lua`, rooted at `src/root.zig`) that links Lua and libc automatically. Requires Zig 0.17.0+; no system Lua installation is needed.
 
 ```sh
 zig build                              # install liblua, lua, luac, headers
@@ -15,7 +15,7 @@ zig build -Doptimize=ReleaseFast       # optimized build
 zig build --help                       # full list of steps and options
 ```
 
-The first build needs network access to fetch Lua and the other declared dependencies.
+The first build requires network access to fetch Lua and the other declared dependencies.
 
 ## Outputs
 
@@ -28,7 +28,7 @@ zig-out/
                        luaconf.h (generated) + luaconf_original.h
 ```
 
-The installed `luaconf.h` is a generated wrapper that applies the selected options and then includes `luaconf_original.h`, so ABI-affecting choices also apply to code using the installed headers.
+The installed `luaconf.h` is a generated wrapper that applies the selected options and then includes `luaconf_original.h`. This ensures ABI-affecting choices also apply to code that uses the installed headers.
 
 ## Options
 
@@ -38,21 +38,21 @@ Lua options map to `luaconf.h` and are applied to the C build, the installed `lu
 
 | Option | Macro | Default | Effect |
 | --- | --- | --- | --- |
-| `-Dreadline` | `LUA_USE_READLINE` | `false` | Linux REPL links GNU readline |
+| `-Dreadline` | `LUA_USE_READLINE` | `false` | Link GNU readline into the Linux REPL |
 | `-Dlua-use-c89` | `LUA_USE_C89` | `false` | Avoid C99 features; also selects `-std=c89`; fails on POSIX targets |
 | `-Dlua-32bits` | `LUA_32BITS` | `false` | 32-bit `lua_Integer` and `lua_Number` |
 | `-Dlua-compat-global` | `LUA_COMPAT_GLOBAL` | `true` | Keep `global` as a non-reserved word |
 | `-Dlua-compat-mathlib` | `LUA_COMPAT_MATHLIB` | `false` | Keep removed math functions |
 | `-Dlua-noconv-n2s` | `LUA_NOCVTN2S` | `false` | Disable number-to-string coercion |
 | `-Dlua-noconv-s2n` | `LUA_NOCVTS2N` | `false` | Disable string-to-number coercion |
-| `-Dlua-use-apicheck` | `LUA_USE_APICHECK` | `false` | C API consistency checks |
-| `-Dlua-no-builtin` | `LUA_NOBUILTIN` | `false` | No branch-prediction builtins |
+| `-Dlua-use-apicheck` | `LUA_USE_APICHECK` | `false` | Enable C API consistency checks |
+| `-Dlua-no-builtin` | `LUA_NOBUILTIN` | `false` | Disable branch-prediction builtins |
 | `-Dlua-path-default` | `LUA_PATH_DEFAULT` | header default | `package.path` templates |
 | `-Dlua-cpath-default` | `LUA_CPATH_DEFAULT` | header default | `package.cpath` templates |
 | `-Dlua-dirsep` | `LUA_DIRSEP` | platform default | Submodule directory separator |
-| `-Dlua-readlinelib` | `LUA_READLINELIB` | `"libreadline.so"` on Linux | REPL's runtime readline library name |
+| `-Dlua-readlinelib` | `LUA_READLINELIB` | `"libreadline.so"` on Linux | Runtime readline library name used by the REPL |
 
-`LUA_IDSIZE`, `LUA_EXTRASPACE`, `LUAL_BUFFERSIZE`, `LUA_INT_TYPE` and `LUA_FLOAT_TYPE` are not exposed: `luaconf.h` defines them unconditionally, so `-D` cannot override them. Edit the header or use `-Dlua-32bits` for the common case.
+`LUA_IDSIZE`, `LUA_EXTRASPACE`, `LUAL_BUFFERSIZE`, `LUA_INT_TYPE`, and `LUA_FLOAT_TYPE` are not exposed as options: `luaconf.h` defines them unconditionally, so `-D` cannot override them. Edit the header directly, or use `-Dlua-32bits` for the common case.
 
 ## Platforms
 
@@ -66,7 +66,7 @@ Lua options map to `luaconf.h` and are applied to the C build, the installed `lu
 | Windows | `LUA_USE_WINDOWS` via `_WIN32` | — |
 | Other | generic | — |
 
-ELF targets also set `rdynamic` (`-Wl,-E`) so C modules loaded at runtime can resolve the Lua API.
+ELF targets also set `rdynamic` (`-Wl,-E`) so that C modules loaded at runtime can resolve the Lua API.
 
 ## As a dependency
 
@@ -90,7 +90,7 @@ exe.root_module.addImport("lua", lua_dep.module("lua"));
 | --- | --- | --- |
 | `lua_dep.module("lua")` | Zig module | High-level wrapper rooted at `src/root.zig`; links `liblua` and libc automatically |
 | `lua_dep.artifact("liblua")` | Static library | Artifact `liblua`, installed as `liblua.a` (`liblua.lib` for COFF targets); `linkLibrary` also propagates the installed headers |
-| `lua_dep.artifact("lua")` | Executable | Stand-alone `lua` interpreter |
+| `lua_dep.artifact("lua")` | Executable | Standalone `lua` interpreter |
 | `lua_dep.artifact("luac")` | Executable | `luac` bytecode compiler |
 
 Linking `artifact("liblua")` propagates the include directory, so C code can include `<lua.h>`, `<lualib.h>`, and `<lauxlib.h>` directly. Within `module("lua")`, the raw generated C API is available as `@import("lua").c`.
