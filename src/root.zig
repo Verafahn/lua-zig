@@ -1,8 +1,8 @@
 //! High-level, idiomatic Zig bindings for Lua 5.5.
 //!
 //! The C API is generated from the installed Lua headers and is available as
-//! `lua.c` as an escape hatch. Most code should use `State`, `Table`,
-//! `Function`, `Userdata`, `Thread` and `Value`.
+//! `c` as an escape hatch. Most code should use `State`, `Table`, `Function`,
+//! `Userdata`, `Thread` and `Value`.
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;

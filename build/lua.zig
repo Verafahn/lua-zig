@@ -38,7 +38,7 @@ pub fn build(
         .lua_lib = lua_lib,
         .config = options,
     });
-    installInterpreter(b, lua_exe, target);
+    b.installArtifact(lua_exe);
 
     const luac_exe = addProgram(b, .{
         .name = "luac",
@@ -87,7 +87,7 @@ fn addLibrary(
     platform.linkLibraries(module, target.result, options.readline);
 
     const lib = b.addLibrary(.{
-        .name = "lua",
+        .name = "liblua",
         .linkage = .static,
         .root_module = module,
     });
@@ -96,7 +96,15 @@ fn addLibrary(
         lib.installHeader(src.path(b, header), header);
     }
     installConfigHeaders(b, lib, src, options);
-    b.installArtifact(lib);
+
+    // The artifact is named `liblua`, while the installed file keeps the
+    // conventional name (`liblua.a`, or `liblua.lib` for COFF targets).
+    const file_name = switch (target.result.ofmt) {
+        .coff => "liblua.lib",
+        else => "liblua.a",
+    };
+    const install_lib = b.addInstallArtifact(lib, .{ .dest_sub_path = file_name });
+    b.getInstallStep().dependOn(&install_lib.step);
     return lib;
 }
 
@@ -132,33 +140,6 @@ fn addProgram(b: *std.Build, options: ProgramOptions) *std.Build.Step.Compile {
     });
     exe.rdynamic = platform.needsExportDynamic(options.target.result);
     return exe;
-}
-
-/// liblua.a and the interpreter would both be artifacts named "lua", which
-/// makes `dependency("lua", ...).artifact("lua")` ambiguous for dependents.
-/// Installing the executable as a plain file keeps `artifact("lua")`
-/// unambiguously pointing at the library while still producing
-/// zig-out/bin/lua in the usual way.
-fn installInterpreter(
-    b: *std.Build,
-    lua_exe: *std.Build.Step.Compile,
-    target: std.Build.ResolvedTarget,
-) void {
-    const install_exe = b.addInstallFileWithDir(
-        lua_exe.getEmittedBin(),
-        .bin,
-        b.fmt("lua{s}", .{target.result.exeFileExt()}),
-    );
-    b.getInstallStep().dependOn(&install_exe.step);
-
-    if (lua_exe.producesPdbFile()) {
-        const install_pdb = b.addInstallFileWithDir(
-            lua_exe.getEmittedPdb(),
-            .bin,
-            "lua.pdb",
-        );
-        b.getInstallStep().dependOn(&install_pdb.step);
-    }
 }
 
 fn addRunStep(b: *std.Build, lua_exe: *std.Build.Step.Compile) void {

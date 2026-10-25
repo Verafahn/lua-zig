@@ -1,6 +1,8 @@
 # Lua on Zig
 
-Zig build for Lua 5.5.1. Lua is pulled from `build.zig.zon` as a package dependency; the build produces a static `liblua`, the standalone `lua` and `luac` programs, installed headers whose `luaconf.h` reflects the selected configuration, Zig bindings generated with translate-c from those headers, and an embedding example. The bindings are wrapped in an idiomatic Zig API (`State`, `Table`, `Function`, `Value`, ...) exposed through a single public module (`lua`, rooted at `src/root.zig`) that links Lua and libc automatically. Requires Zig 0.17.0+ and no system Lua installation.
+Zig build for Lua 5.5.1. Lua is pulled from `build.zig.zon` as a package dependency; the build produces a static `liblua`, the standalone `lua` and `luac` programs, installed headers whose `luaconf.h` reflects the selected configuration, Zig bindings generated with translate-c from those headers, and an embedding example.
+
+The bindings are wrapped in an idiomatic Zig API (`State`, `Table`, `Function`, `Value`, ...) exposed through a single public module (`lua`, rooted at `src/root.zig`) that links Lua and libc automatically. Requires Zig 0.17.0+ and no system Lua installation.
 
 ```sh
 zig build                              # install liblua, lua, luac, headers
@@ -21,7 +23,7 @@ The first build needs network access to fetch Lua and the other declared depende
 zig-out/
 ├── bin/lua[.exe]      standalone interpreter
 ├── bin/luac[.exe]     bytecode compiler
-├── lib/liblua.a       static library
+├── lib/liblua.a       static library (liblua.lib for COFF targets)
 └── include/           lua.h lualib.h lauxlib.h lua.hpp
                        luaconf.h (generated) + luaconf_original.h
 ```
@@ -32,7 +34,7 @@ The installed `luaconf.h` is a generated wrapper that applies the selected optio
 
 Standard Zig options: `-Dtarget`, `-Dcpu`, `-Dofmt`, `-Doptimize={debug,safe,fast,small}`, `-Ddynamic-linker`.
 
-Lua options map to `luaconf.h` and are applied to the C build, the installed `luaconf.h`, and therefore the generated bindings:
+Lua options map to `luaconf.h` and are applied to the C build, the installed `luaconf.h`, and therefore the generated bindings. They are also accepted as `b.dependency` options (without the `-D` prefix).
 
 | Option | Macro | Default | Effect |
 | --- | --- | --- | --- |
@@ -68,39 +70,32 @@ ELF targets also set `rdynamic` (`-Wl,-E`) so C modules loaded at runtime can re
 
 ## As a dependency
 
-```zig
-// build.zig.zon
-.dependencies = .{
-    .lua = .{ .path = "../lua" }, // or use `zig fetch --save <url>`
-},
+```sh
+zig fetch --save git+https://github.com/Verafahn/lua-zig
 ```
 
 ```zig
-const lua = b.dependency("lua", .{
+const lua_dep = b.dependency("lua", .{
     .target = target,
     .optimize = optimize,
-    .@"lua-32bits" = true, // any Lua option is valid here
+    .@"lua-32bits" = true, // any Lua option from above
 });
 
-exe.root_module.addImport("lua", lua.module("lua"));
+exe.root_module.addImport("lua", lua_dep.module("lua"));
 ```
 
-`module("lua")` links liblua and libc automatically; no `linkLibrary` call is needed. `artifact("lua")` remains available for C interop, and `artifact("luac")` is the compiler. The installed `lua` executable is deliberately not an artifact, keeping `artifact("lua")` unambiguous.
+`b.dependency` exposes one module and three artifacts:
 
-## Zig API
+| Access | Kind | Contents |
+| --- | --- | --- |
+| `lua_dep.module("lua")` | Zig module | High-level wrapper rooted at `src/root.zig`; links `liblua` and libc automatically |
+| `lua_dep.artifact("liblua")` | Static library | Artifact `liblua`, installed as `liblua.a` (`liblua.lib` for COFF targets); `linkLibrary` also propagates the installed headers |
+| `lua_dep.artifact("lua")` | Executable | Stand-alone `lua` interpreter |
+| `lua_dep.artifact("luac")` | Executable | `luac` bytecode compiler |
 
-The public module exposes a high-level wrapper under `@import("lua").lua`:
+Linking `artifact("liblua")` propagates the include directory, so C code can include `<lua.h>`, `<lualib.h>`, and `<lauxlib.h>` directly. Within `module("lua")`, the raw generated C API is available as `@import("lua").c`.
 
-| Type | Purpose |
-| --- | --- |
-| `State` | interpreter: stack, globals, loading/calls, GC, registry refs, host helpers |
-| `Table` | registry-backed table handle: get/set, typed getters, iteration, metatables |
-| `Function` | callable handle; arguments/results use the state stack |
-| `Userdata` | userdata handle with typed pointer/byte access |
-| `Thread` | coroutine handle: create, status, `resumeCoroutine` |
-| `Value` | owned value union (strings copied; handles keep registry refs) |
-
-The raw generated C API remains available as `lua.c` for anything not covered by the wrapper. Handles own a registry reference (`clone`/`deinit`); `Value` owns its string or handle payload, with `takeString`/`takeTable`/`takeFunction`/`takeUserdata`/`takeThread` for moving handles out before `deinit`.
+Everything else — the translate-c output, the filtered C-API module, and the filter executable — is an implementation detail and not part of the public surface. No other modules, named lazy paths, or write-files are intended for consumption. The dependency accepts `.target`, `.optimize`, and every Lua option listed above.
 
 ## Embedding
 
@@ -130,22 +125,7 @@ fn run(allocator: std.mem.Allocator) !void {
 }
 ```
 
-`src/bin/filter.zig` generates the private C-API module; `src/root.zig` is the only public entry point, re-exporting the wrapper. Translation runs at build time against the installed headers (including the generated `luaconf.h`), so numeric types and other configuration-dependent declarations always match the compiled library.
-
-## Layout
-
-```text
-build.zig             project entry: target/optimize, translate-c bindings, example
-build/                Lua C build: sources, options, flags, platforms, install, steps
-src/root.zig          public module: re-exports the wrapper as `lua`
-src/lua.zig           State, Value, Ref, errors, stack/global/call/GC API
-src/lua/table.zig     Table handle, typed access, iteration
-src/lua/function.zig  Function handle, calls
-src/lua/userdata.zig  Userdata handle
-src/lua/thread.zig    Coroutine handle, resume
-src/bin/filter.zig    emits the private C API subset
-examples/minimal.zig  embedding example
-```
+`src/bin/filter.zig` generates the private C-API module; `src/root.zig` is the only public entry point and re-exports the per-type handle modules under `src/lua/`. Translation runs at build time against the installed headers (including the generated `luaconf.h`), so numeric types and other configuration-dependent declarations always match the compiled library.
 
 ## License
 
