@@ -364,9 +364,205 @@ pub const State = struct {
     }
 
     /// Pushes a C function and stores it in a global.
-    pub fn register(self: *State, name: [:0]const u8, function: CFunction) void {
+    pub fn registerCFunction(self: *State, name: [:0]const u8, function: CFunction) void {
         self.pushCFunction(function);
         self.setGlobal(name);
+    }
+
+    // -----------------------------------------------------------------
+    // Automatic function wrappers
+    // -----------------------------------------------------------------
+
+    /// Builds the C-callable trampoline for `function`.
+    fn FunctionWrapper(comptime function: anytype) type {
+        validateFunction(function);
+    
+        return struct {
+            fn call(raw: ?*RawState) callconv(.c) c_int {
+                var state = State.wrap(raw orelse return 0);
+                return invoke(&state, function);
+            }
+        };
+    }
+    
+    fn validateFunction(comptime function: anytype) void {
+        const info = @typeInfo(@TypeOf(function)).@"fn";
+        if (info.attrs.varargs) {
+            @compileError("registerFunction: variadic Zig functions are not supported");
+        }
+    
+        const Return = info.return_type orelse
+            @compileError("registerFunction: the return type must be concrete");
+        if (@typeInfo(Return) == .noreturn) {
+            @compileError("registerFunction: noreturn functions are not supported; return void and raise instead");
+        }
+    
+        comptime var optional_seen = false;
+        inline for (info.param_types, 0..) |maybe_param, i| {
+            const Param = maybe_param orelse
+                @compileError("registerFunction: generic parameters are not supported");
+            if (Param == *State) {
+                if (i != 0) {
+                    @compileError("registerFunction: *State must be the first parameter");
+                }
+                continue;
+            }
+            if (@typeInfo(Param) == .optional) {
+                optional_seen = true;
+            } else if (optional_seen) {
+                @compileError("registerFunction: optional parameters must be trailing");
+            }
+        }
+    }
+    
+    fn invoke(state: *State, comptime function: anytype) c_int {
+        const info = @typeInfo(@TypeOf(function)).@"fn";
+        const param_types = info.param_types;
+        const has_state = param_types.len > 0 and
+            param_types[0] != null and param_types[0].? == *State;
+        const state_offset: usize = if (has_state) 1 else 0;
+    
+        var args: std.meta.ArgsTuple(@TypeOf(function)) = undefined;
+        inline for (param_types, 0..) |maybe_param, i| {
+            const Param = maybe_param.?;
+            if (i == 0 and has_state) {
+                args[i] = state;
+            } else {
+                const arg_index: c_int = @intCast(i + 1 - state_offset);
+                args[i] = readArgument(state, Param, arg_index);
+            }
+        }
+    
+        const Return = info.return_type.?;
+        if (comptime @typeInfo(Return) == .error_union) {
+            const result = @call(.auto, function, args) catch |err| {
+                state.raise(@errorName(err));
+            };
+            return pushResults(state, result);
+        }
+    
+        const result = @call(.auto, function, args);
+        return pushResults(state, result);
+    }
+    
+    fn pushResults(state: *State, value: anytype) c_int {
+        const T = @TypeOf(value);
+        switch (@typeInfo(T)) {
+            .void => return 0,
+            .@"struct" => |info| {
+                if (info.is_tuple) {
+                    inline for (value) |field| state.pushAny(field);
+                    return @intCast(info.field_types.len);
+                }
+            },
+            else => {},
+        }
+        state.pushAny(value);
+        return 1;
+    }
+    
+    fn readArgument(state: *State, comptime T: type, arg: c_int) T {
+        if (@typeInfo(T) == .optional) {
+            const inner = @typeInfo(T).optional.child;
+            const kind = state.typeOf(arg);
+            if (kind == .none or kind == .nil) return null;
+            return readArgument(state, inner, arg);
+        }
+        return readRequiredArgument(state, T, arg);
+    }
+    
+    fn readRequiredArgument(state: *State, comptime T: type, arg: c_int) T {
+        return switch (@typeInfo(T)) {
+            .bool => blk: {
+                state.checkType(arg, .boolean);
+                break :blk state.toBoolean(arg);
+            },
+            .int => blk: {
+                const value = state.checkInteger(arg);
+                break :blk std.math.cast(T, value) orelse
+                    state.argError(arg, "integer out of range");
+            },
+            .float => @floatCast(state.checkNumber(arg)),
+            .pointer => |ptr| readPointerArgument(state, T, ptr, arg),
+            else => @compileError("registerFunction: unsupported parameter type " ++ @typeName(T)),
+        };
+    }
+    
+    fn readPointerArgument(
+        state: *State,
+        comptime T: type,
+        comptime ptr: std.lang.Type.Pointer,
+        arg: c_int,
+    ) T {
+        switch (ptr.size) {
+            .slice => {
+                if (ptr.child != u8 or !ptr.attrs.@"const") {
+                    @compileError("registerFunction: only []const u8 and [:0]const u8 string parameters are supported, got " ++ @typeName(T));
+                }
+                if (ptr.sentinel() != null) return checkSentinelString(state, arg);
+                return state.checkString(arg);
+            },
+            .one => {
+                if (@typeInfo(ptr.child) == .array) {
+                    @compileError("registerFunction: string pointer parameters are not supported; use a slice instead");
+                }
+                const kind = state.typeOf(arg);
+                if (kind != .light_userdata and kind != .userdata) {
+                    state.argError(arg, "userdata expected");
+                }
+                const raw = state.toUserdataPtr(arg) orelse
+                    state.argError(arg, "userdata expected");
+                if (@intFromPtr(raw) % pointerAlignment(ptr) != 0) {
+                    state.argError(arg, "misaligned userdata pointer");
+                }
+                return @ptrCast(@alignCast(raw));
+            },
+            else => @compileError("registerFunction: unsupported pointer parameter type " ++ @typeName(T)),
+        }
+    }
+    
+    fn checkSentinelString(state: *State, arg: c_int) [:0]const u8 {
+        var len: usize = 0;
+        const ptr = c.luaL_checklstring(state.raw, arg, &len);
+        return ptr[0..len :0];
+    }
+    
+    fn pointerAlignment(comptime ptr: std.lang.Type.Pointer) usize {
+        return ptr.attrs.@"align" orelse childAlignment(ptr.child);
+    }
+    
+    fn childAlignment(comptime T: type) usize {
+        const info = @typeInfo(T);
+        return switch (info) {
+            .@"opaque" => 1,
+            else => @alignOf(T),
+        };
+    }
+    
+    /// Registers `function` as a global Lua function, converting arguments and
+    /// results automatically.
+    ///
+    /// Lua arguments map to the function's parameters from left to right. A
+    /// leading `*State` parameter receives the calling state and is valid only
+    /// for the duration of the call. `?T` parameters accept `nil` and must be
+    /// trailing. Argument type and arity mismatches raise regular Lua errors,
+    /// so they behave correctly under `pcall`.
+    ///
+    /// Supported parameter types are `bool`, integers, floats, string slices
+    /// (`[]const u8` and `[:0]const u8`), and single pointers, which are passed
+    /// as light or full userdata. Unsupported types fail at compile time.
+    ///
+    /// A single return value becomes one Lua result (`?T` becomes `nil` when
+    /// null). A tuple becomes multiple results in order, `void` becomes no
+    /// results, and an error union raises a Lua error containing the error
+    /// name.
+    pub fn registerFunction(
+        self: *State,
+        comptime name: [:0]const u8,
+        comptime function: anytype,
+    ) void {
+        const wrapper = FunctionWrapper(function);
+        self.registerCFunction(name, &wrapper.call);
     }
 
     // -----------------------------------------------------------------
@@ -1104,12 +1300,168 @@ test "host functions check arguments" {
     defer state.deinit();
     state.openLibs();
 
-    state.register("host_add", hostAdd);
+    state.registerCFunction("host_add", hostAdd);
 
     var value = try state.evalString(std.testing.allocator, "return host_add(20, 22)");
     defer value.deinit(std.testing.allocator);
 
     try std.testing.expectEqual(@as(?Integer, 42), value.asInteger());
+}
+
+fn zigAdd(a: Integer, b: Integer) Integer {
+    return a + b;
+}
+
+fn zigArgCount(state: *State) Integer {
+    return @intCast(state.getTop());
+}
+
+fn zigOptional(value: ?Integer) Integer {
+    return value orelse -1;
+}
+
+fn zigPair(value: Integer) struct { Integer, ?Integer } {
+    return .{ value, if (value > 0) value * 2 else null };
+}
+
+fn zigHalf(value: f32) f32 {
+    return value / 2;
+}
+
+fn zigLength(value: [:0]const u8) Integer {
+    return @intCast(value.len);
+}
+
+fn zigSmall(value: i8) i8 {
+    return value;
+}
+
+fn zigEcho(value: ?[]const u8) ?[]const u8 {
+    return value;
+}
+
+fn zigIsNull(ptr: ?*anyopaque) bool {
+    return ptr == null;
+}
+
+fn zigFail(ok: bool) error{Boom}!Integer {
+    if (!ok) return error.Boom;
+    return 1;
+}
+
+fn expectLuaError(state: *State, source: []const u8, expected: []const u8) !void {
+    try state.loadBuffer(source, "=(expectLuaError)", null);
+    try std.testing.expectError(error.Runtime, state.pcall(0, 0, 0));
+
+    const message = (try state.popErrorMessage(std.testing.allocator)) orelse
+        return error.MissingErrorMessage;
+    defer std.testing.allocator.free(message);
+
+    try std.testing.expect(std.mem.indexOf(u8, message, expected) != null);
+}
+
+test "registerFunction converts arguments and results" {
+    var state = try State.create();
+    defer state.deinit();
+    state.openLibs();
+
+    state.registerFunction("zig_add", zigAdd);
+    state.registerFunction("zig_arg_count", zigArgCount);
+    state.registerFunction("zig_half", zigHalf);
+
+    var value = try state.evalString(std.testing.allocator,
+        \\assert(zig_half(5) == 2.5)
+        \\return zig_add(19, 23)
+    );
+    defer value.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(?Integer, 42), value.asInteger());
+
+    var count = try state.evalString(std.testing.allocator, "return zig_arg_count('a', true, nil)");
+    defer count.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(?Integer, 3), count.asInteger());
+}
+
+test "registerFunction handles optional parameters and tuple results" {
+    var state = try State.create();
+    defer state.deinit();
+    state.openLibs();
+
+    state.registerFunction("zig_optional", zigOptional);
+    state.registerFunction("zig_pair", zigPair);
+
+    var value = try state.evalString(std.testing.allocator,
+        \\assert(zig_optional() == -1)
+        \\assert(zig_optional(nil) == -1)
+        \\assert(zig_optional(7) == 7)
+        \\local a, b = zig_pair(4)
+        \\assert(a == 4 and b == 8)
+        \\local c, d = zig_pair(-2)
+        \\assert(c == -2 and d == nil)
+        \\return 17
+    );
+    defer value.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(?Integer, 17), value.asInteger());
+}
+
+test "registerFunction handles optional strings and userdata" {
+    var state = try State.create();
+    defer state.deinit();
+    state.openLibs();
+
+    state.registerFunction("zig_echo", zigEcho);
+    state.registerFunction("zig_is_null", zigIsNull);
+    state.registerFunction("zig_length", zigLength);
+
+    var sentinel: u32 = 0;
+    state.pushLightUserdata(@ptrCast(&sentinel));
+    state.setGlobal("sentinel");
+
+    const block = state.newUserdataTyped(u32);
+    block.* = 7;
+    state.setGlobal("userdata");
+
+    var value = try state.evalString(std.testing.allocator,
+        \\assert(zig_echo() == nil)
+        \\assert(zig_echo(nil) == nil)
+        \\assert(zig_echo("hello") == "hello")
+        \\assert(zig_length("abcd") == 4)
+        \\assert(zig_is_null(nil))
+        \\assert(not zig_is_null(sentinel))
+        \\assert(not zig_is_null(userdata))
+        \\return 1
+    );
+    defer value.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(?Integer, 1), value.asInteger());
+}
+
+test "registerFunction reports argument errors through Lua" {
+    var state = try State.create();
+    defer state.deinit();
+    state.openLibs();
+
+    state.registerFunction("zig_add", zigAdd);
+    state.registerFunction("zig_optional", zigOptional);
+    state.registerFunction("zig_small", zigSmall);
+    state.registerFunction("zig_echo", zigEcho);
+    state.registerFunction("zig_is_null", zigIsNull);
+    state.registerFunction("zig_fail", zigFail);
+
+    try expectLuaError(&state, "return zig_add('one', 2)", "bad argument #1");
+    try expectLuaError(&state, "return zig_add(1)", "bad argument #2");
+    try expectLuaError(&state, "return zig_small(300)", "integer out of range");
+    try expectLuaError(&state, "return zig_optional('x')", "bad argument #1");
+    try expectLuaError(&state, "return zig_echo({})", "bad argument #1");
+    try expectLuaError(&state, "return zig_is_null(42)", "bad argument #1");
+
+    var value = try state.evalString(std.testing.allocator, "return zig_fail(true)");
+    defer value.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(?Integer, 1), value.asInteger());
+
+    try expectLuaError(&state, "return zig_fail(false)", "Boom");
+}
+
+fn hello() void {
+    std.debug.print("Hello", .{});
 }
 
 test {
