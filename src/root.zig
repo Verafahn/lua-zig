@@ -112,36 +112,31 @@ pub fn threadStatusFromC(status: c_int) ThreadStatus {
 /// `deinit` closes the state; copies of a `State` do not own the state and
 /// must not be deinitialized.
 pub const State = struct {
-    handle: *RawState,
+    raw: *RawState,
 
     /// Creates a new state with Lua's default allocator.
     pub fn create() Error!State {
         const handle = c.luaL_newstate() orelse return error.OutOfMemory;
-        return .{ .handle = handle };
+        return .{ .raw = handle };
     }
 
     /// Wraps a raw state without taking ownership. Useful inside C callbacks.
     pub fn wrap(handle: *RawState) State {
-        return .{ .handle = handle };
+        return .{ .raw = handle };
     }
 
     /// Closes the state. Must be called exactly once for the owning `State`.
     pub fn deinit(self: *State) void {
-        c.lua_close(self.handle);
+        c.lua_close(self.raw);
         self.* = undefined;
     }
 
-    /// Raw C state, for APIs not covered by this wrapper.
-    pub fn raw(self: *State) *RawState {
-        return self.handle;
-    }
-
     pub fn version(self: *State) Number {
-        return c.lua_version(self.handle);
+        return c.lua_version(self.raw);
     }
 
     pub fn openLibs(self: *State) void {
-        c.luaL_openlibs(self.handle);
+        c.luaL_openlibs(self.raw);
     }
 
     // -----------------------------------------------------------------
@@ -149,51 +144,51 @@ pub const State = struct {
     // -----------------------------------------------------------------
 
     pub fn getTop(self: *State) c_int {
-        return c.lua_gettop(self.handle);
+        return c.lua_gettop(self.raw);
     }
 
     pub fn absIndex(self: *State, idx: c_int) c_int {
-        return c.lua_absindex(self.handle, idx);
+        return c.lua_absindex(self.raw, idx);
     }
 
     pub fn checkStack(self: *State, extra: c_int) bool {
-        return c.lua_checkstack(self.handle, extra) != 0;
+        return c.lua_checkstack(self.raw, extra) != 0;
     }
 
     pub fn setTop(self: *State, idx: c_int) void {
-        c.lua_settop(self.handle, idx);
+        c.lua_settop(self.raw, idx);
     }
 
     pub fn pop(self: *State, n: c_int) void {
-        c.lua_settop(self.handle, -n - 1);
+        c.lua_settop(self.raw, -n - 1);
     }
 
     pub fn pushValue(self: *State, idx: c_int) void {
-        c.lua_pushvalue(self.handle, idx);
+        c.lua_pushvalue(self.raw, idx);
     }
 
     pub fn copy(self: *State, from: c_int, to: c_int) void {
-        c.lua_copy(self.handle, from, to);
+        c.lua_copy(self.raw, from, to);
     }
 
     pub fn remove(self: *State, idx: c_int) void {
-        c.lua_remove(self.handle, idx);
+        c.lua_remove(self.raw, idx);
     }
 
     pub fn insert(self: *State, idx: c_int) void {
-        c.lua_insert(self.handle, idx);
+        c.lua_insert(self.raw, idx);
     }
 
     pub fn replace(self: *State, idx: c_int) void {
-        c.lua_replace(self.handle, idx);
+        c.lua_replace(self.raw, idx);
     }
 
     pub fn rotate(self: *State, idx: c_int, n: c_int) void {
-        c.lua_rotate(self.handle, idx, n);
+        c.lua_rotate(self.raw, idx, n);
     }
 
     pub fn xmove(self: *State, to: *State, n: c_int) void {
-        c.lua_xmove(self.handle, to.handle, n);
+        c.lua_xmove(self.raw, to.raw, n);
     }
 
     // -----------------------------------------------------------------
@@ -201,11 +196,11 @@ pub const State = struct {
     // -----------------------------------------------------------------
 
     pub fn typeOf(self: *State, idx: c_int) Type {
-        return @fromBackingInt(@intCast(c.lua_type(self.handle, idx)));
+        return @fromBackingInt(@intCast(c.lua_type(self.raw, idx)));
     }
 
     pub fn typeName(self: *State, value_type: Type) []const u8 {
-        const ptr = c.lua_typename(self.handle, @backingInt(value_type));
+        const ptr = c.lua_typename(self.raw, @backingInt(value_type));
         return ptr[0..std.mem.len(ptr)];
     }
 
@@ -226,15 +221,15 @@ pub const State = struct {
     }
 
     pub fn isNumber(self: *State, idx: c_int) bool {
-        return c.lua_isnumber(self.handle, idx) != 0;
+        return c.lua_isnumber(self.raw, idx) != 0;
     }
 
     pub fn isInteger(self: *State, idx: c_int) bool {
-        return c.lua_isinteger(self.handle, idx) != 0;
+        return c.lua_isinteger(self.raw, idx) != 0;
     }
 
     pub fn isString(self: *State, idx: c_int) bool {
-        return c.lua_isstring(self.handle, idx) != 0;
+        return c.lua_isstring(self.raw, idx) != 0;
     }
 
     pub fn isTable(self: *State, idx: c_int) bool {
@@ -246,7 +241,7 @@ pub const State = struct {
     }
 
     pub fn isCFunction(self: *State, idx: c_int) bool {
-        return c.lua_iscfunction(self.handle, idx) != 0;
+        return c.lua_iscfunction(self.raw, idx) != 0;
     }
 
     pub fn isUserdata(self: *State, idx: c_int) bool {
@@ -262,18 +257,18 @@ pub const State = struct {
     }
 
     pub fn toBoolean(self: *State, idx: c_int) bool {
-        return c.lua_toboolean(self.handle, idx) != 0;
+        return c.lua_toboolean(self.raw, idx) != 0;
     }
 
     pub fn toInteger(self: *State, idx: c_int) ?Integer {
         var is_num: c_int = 0;
-        const value = c.lua_tointegerx(self.handle, idx, &is_num);
+        const value = c.lua_tointegerx(self.raw, idx, &is_num);
         return if (is_num != 0) value else null;
     }
 
     pub fn toNumber(self: *State, idx: c_int) ?Number {
         var is_num: c_int = 0;
-        const value = c.lua_tonumberx(self.handle, idx, &is_num);
+        const value = c.lua_tonumberx(self.raw, idx, &is_num);
         return if (is_num != 0) value else null;
     }
 
@@ -281,7 +276,7 @@ pub const State = struct {
     /// stack (or is otherwise reachable).
     pub fn toString(self: *State, idx: c_int) ?[]const u8 {
         var len: usize = 0;
-        const ptr = c.lua_tolstring(self.handle, idx, &len);
+        const ptr = c.lua_tolstring(self.raw, idx, &len);
         if (ptr == null) return null;
         return ptr[0..len];
     }
@@ -294,30 +289,30 @@ pub const State = struct {
     /// Like `toString`, but honors `__tostring` and returns an owned copy.
     pub fn toDisplayString(self: *State, allocator: Allocator, idx: c_int) !?[]u8 {
         var len: usize = 0;
-        const ptr = c.luaL_tolstring(self.handle, idx, &len);
+        const ptr = c.luaL_tolstring(self.raw, idx, &len);
         if (ptr == null) return null;
         defer self.pop(1);
         return allocator.dupe(u8, ptr[0..len]);
     }
 
     pub fn toCFunction(self: *State, idx: c_int) ?CFunction {
-        return c.lua_tocfunction(self.handle, idx);
+        return c.lua_tocfunction(self.raw, idx);
     }
 
     pub fn toUserdataPtr(self: *State, idx: c_int) ?*anyopaque {
-        return c.lua_touserdata(self.handle, idx);
+        return c.lua_touserdata(self.raw, idx);
     }
 
     pub fn toPointer(self: *State, idx: c_int) ?*const anyopaque {
-        return c.lua_topointer(self.handle, idx);
+        return c.lua_topointer(self.raw, idx);
     }
 
     pub fn toThreadPtr(self: *State, idx: c_int) ?*RawState {
-        return c.lua_tothread(self.handle, idx);
+        return c.lua_tothread(self.raw, idx);
     }
 
     pub fn rawLen(self: *State, idx: c_int) usize {
-        return c.lua_rawlen(self.handle, idx);
+        return c.lua_rawlen(self.raw, idx);
     }
 
     // -----------------------------------------------------------------
@@ -325,47 +320,47 @@ pub const State = struct {
     // -----------------------------------------------------------------
 
     pub fn pushNil(self: *State) void {
-        c.lua_pushnil(self.handle);
+        c.lua_pushnil(self.raw);
     }
 
     pub fn pushBoolean(self: *State, value: bool) void {
-        c.lua_pushboolean(self.handle, @intFromBool(value));
+        c.lua_pushboolean(self.raw, @intFromBool(value));
     }
 
     pub fn pushInteger(self: *State, value: Integer) void {
-        c.lua_pushinteger(self.handle, value);
+        c.lua_pushinteger(self.raw, value);
     }
 
     pub fn pushNumber(self: *State, value: Number) void {
-        c.lua_pushnumber(self.handle, value);
+        c.lua_pushnumber(self.raw, value);
     }
 
     pub fn pushSlice(self: *State, value: []const u8) void {
-        _ = c.lua_pushlstring(self.handle, value.ptr, value.len);
+        _ = c.lua_pushlstring(self.raw, value.ptr, value.len);
     }
 
     pub fn pushString(self: *State, value: [:0]const u8) void {
-        _ = c.lua_pushstring(self.handle, value.ptr);
+        _ = c.lua_pushstring(self.raw, value.ptr);
     }
 
     pub fn pushLiteral(self: *State, comptime value: []const u8) void {
-        _ = c.lua_pushlstring(self.handle, value.ptr, value.len);
+        _ = c.lua_pushlstring(self.raw, value.ptr, value.len);
     }
 
     pub fn pushLightUserdata(self: *State, ptr: ?*anyopaque) void {
-        c.lua_pushlightuserdata(self.handle, ptr);
+        c.lua_pushlightuserdata(self.raw, ptr);
     }
 
     pub fn pushCFunction(self: *State, function: CFunction) void {
-        _ = c.lua_pushcclosure(self.handle, function, 0);
+        _ = c.lua_pushcclosure(self.raw, function, 0);
     }
 
     pub fn pushClosure(self: *State, function: CFunction, upvalues: c_int) void {
-        _ = c.lua_pushcclosure(self.handle, function, upvalues);
+        _ = c.lua_pushcclosure(self.raw, function, upvalues);
     }
 
     pub fn pushThread(self: *State) bool {
-        return c.lua_pushthread(self.handle) != 0;
+        return c.lua_pushthread(self.raw) != 0;
     }
 
     /// Pushes a C function and stores it in a global.
@@ -379,58 +374,58 @@ pub const State = struct {
     // -----------------------------------------------------------------
 
     pub fn checkAny(self: *State, arg: c_int) void {
-        c.luaL_checkany(self.handle, arg);
+        c.luaL_checkany(self.raw, arg);
     }
 
     pub fn checkType(self: *State, arg: c_int, value_type: Type) void {
-        c.luaL_checktype(self.handle, arg, @backingInt(value_type));
+        c.luaL_checktype(self.raw, arg, @backingInt(value_type));
     }
 
     pub fn checkInteger(self: *State, arg: c_int) Integer {
-        return c.luaL_checkinteger(self.handle, arg);
+        return c.luaL_checkinteger(self.raw, arg);
     }
 
     pub fn optInteger(self: *State, arg: c_int, default: Integer) Integer {
-        return c.luaL_optinteger(self.handle, arg, default);
+        return c.luaL_optinteger(self.raw, arg, default);
     }
 
     pub fn checkNumber(self: *State, arg: c_int) Number {
-        return c.luaL_checknumber(self.handle, arg);
+        return c.luaL_checknumber(self.raw, arg);
     }
 
     pub fn optNumber(self: *State, arg: c_int, default: Number) Number {
-        return c.luaL_optnumber(self.handle, arg, default);
+        return c.luaL_optnumber(self.raw, arg, default);
     }
 
     pub fn checkString(self: *State, arg: c_int) []const u8 {
         var len: usize = 0;
-        const ptr = c.luaL_checklstring(self.handle, arg, &len);
+        const ptr = c.luaL_checklstring(self.raw, arg, &len);
         return ptr[0..len];
     }
 
     pub fn optString(self: *State, arg: c_int, default: [:0]const u8) []const u8 {
         var len: usize = 0;
-        const ptr = c.luaL_optlstring(self.handle, arg, default.ptr, &len);
+        const ptr = c.luaL_optlstring(self.raw, arg, default.ptr, &len);
         return ptr[0..len];
     }
 
     pub fn argError(self: *State, arg: c_int, message: [:0]const u8) noreturn {
-        _ = c.luaL_argerror(self.handle, arg, message.ptr);
+        _ = c.luaL_argerror(self.raw, arg, message.ptr);
         unreachable;
     }
 
     pub fn getMetaField(self: *State, idx: c_int, name: [:0]const u8) bool {
-        return c.luaL_getmetafield(self.handle, idx, name.ptr) != 0;
+        return c.luaL_getmetafield(self.raw, idx, name.ptr) != 0;
     }
 
     pub fn callMeta(self: *State, idx: c_int, name: [:0]const u8) bool {
-        return c.luaL_callmeta(self.handle, idx, name.ptr) != 0;
+        return c.luaL_callmeta(self.raw, idx, name.ptr) != 0;
     }
 
     pub fn traceback(self: *State, message: ?[:0]const u8, level: c_int) void {
         c.luaL_traceback(
-            self.handle,
-            self.handle,
+            self.raw,
+            self.raw,
             if (message) |m| m.ptr else null,
             level,
         );
@@ -438,7 +433,7 @@ pub const State = struct {
 
     /// Loads a standard library through `luaL_requiref`.
     pub fn requireLib(self: *State, name: [:0]const u8, open_fn: CFunction) void {
-        c.luaL_requiref(self.handle, name.ptr, open_fn, 1);
+        c.luaL_requiref(self.raw, name.ptr, open_fn, 1);
         self.pop(1);
     }
 
@@ -499,11 +494,11 @@ pub const State = struct {
     // -----------------------------------------------------------------
 
     pub fn pushGlobal(self: *State, name: [:0]const u8) Type {
-        return @fromBackingInt(@intCast(c.lua_getglobal(self.handle, name.ptr)));
+        return @fromBackingInt(@intCast(c.lua_getglobal(self.raw, name.ptr)));
     }
 
     pub fn setGlobal(self: *State, name: [:0]const u8) void {
-        c.lua_setglobal(self.handle, name.ptr);
+        c.lua_setglobal(self.raw, name.ptr);
     }
 
     pub fn setGlobalValue(self: *State, name: [:0]const u8, value: anytype) void {
@@ -517,7 +512,7 @@ pub const State = struct {
     }
 
     pub fn pushGlobalTable(self: *State) void {
-        _ = c.lua_rawgeti(self.handle, registry_index, @as(Integer, c.LUA_RIDX_GLOBALS));
+        _ = c.lua_rawgeti(self.raw, registry_index, @as(Integer, c.LUA_RIDX_GLOBALS));
     }
 
     pub fn globalTable(self: *State) Table {
@@ -527,55 +522,55 @@ pub const State = struct {
     }
 
     pub fn pushField(self: *State, idx: c_int, name: [:0]const u8) Type {
-        return @fromBackingInt(@intCast(c.lua_getfield(self.handle, idx, name.ptr)));
+        return @fromBackingInt(@intCast(c.lua_getfield(self.raw, idx, name.ptr)));
     }
 
     pub fn setField(self: *State, idx: c_int, name: [:0]const u8) void {
-        c.lua_setfield(self.handle, idx, name.ptr);
+        c.lua_setfield(self.raw, idx, name.ptr);
     }
 
     pub fn pushTable(self: *State, idx: c_int) Type {
-        return @fromBackingInt(@intCast(c.lua_gettable(self.handle, idx)));
+        return @fromBackingInt(@intCast(c.lua_gettable(self.raw, idx)));
     }
 
     pub fn setTable(self: *State, idx: c_int) void {
-        c.lua_settable(self.handle, idx);
+        c.lua_settable(self.raw, idx);
     }
 
     pub fn pushIntegerField(self: *State, idx: c_int, key: Integer) Type {
-        return @fromBackingInt(@intCast(c.lua_geti(self.handle, idx, key)));
+        return @fromBackingInt(@intCast(c.lua_geti(self.raw, idx, key)));
     }
 
     pub fn setIntegerField(self: *State, idx: c_int, key: Integer) void {
-        c.lua_seti(self.handle, idx, key);
+        c.lua_seti(self.raw, idx, key);
     }
 
     pub fn rawGet(self: *State, idx: c_int) Type {
-        return @fromBackingInt(@intCast(c.lua_rawget(self.handle, idx)));
+        return @fromBackingInt(@intCast(c.lua_rawget(self.raw, idx)));
     }
 
     pub fn rawSet(self: *State, idx: c_int) void {
-        c.lua_rawset(self.handle, idx);
+        c.lua_rawset(self.raw, idx);
     }
 
     pub fn rawGetInteger(self: *State, idx: c_int, key: Integer) Type {
-        return @fromBackingInt(@intCast(c.lua_rawgeti(self.handle, idx, key)));
+        return @fromBackingInt(@intCast(c.lua_rawgeti(self.raw, idx, key)));
     }
 
     pub fn rawSetInteger(self: *State, idx: c_int, key: Integer) void {
-        c.lua_rawseti(self.handle, idx, key);
+        c.lua_rawseti(self.raw, idx, key);
     }
 
     pub fn rawGetPointer(self: *State, idx: c_int, ptr: ?*const anyopaque) Type {
-        return @fromBackingInt(@intCast(c.lua_rawgetp(self.handle, idx, ptr)));
+        return @fromBackingInt(@intCast(c.lua_rawgetp(self.raw, idx, ptr)));
     }
 
     pub fn rawSetPointer(self: *State, idx: c_int, ptr: ?*const anyopaque) void {
-        c.lua_rawsetp(self.handle, idx, ptr);
+        c.lua_rawsetp(self.raw, idx, ptr);
     }
 
     pub fn createTable(self: *State, array_size: c_int, record_size: c_int) void {
-        c.lua_createtable(self.handle, array_size, record_size);
+        c.lua_createtable(self.raw, array_size, record_size);
     }
 
     pub fn newTable(self: *State) Table {
@@ -585,33 +580,33 @@ pub const State = struct {
     }
 
     pub fn newThread(self: *State) Error!Thread {
-        _ = c.lua_newthread(self.handle) orelse return error.OutOfMemory;
+        _ = c.lua_newthread(self.raw) orelse return error.OutOfMemory;
         defer self.pop(1);
         return Thread.fromStack(self, -1);
     }
 
     pub fn length(self: *State, idx: c_int) Integer {
-        return c.luaL_len(self.handle, idx);
+        return c.luaL_len(self.raw, idx);
     }
 
     pub fn next(self: *State, idx: c_int) bool {
-        return c.lua_next(self.handle, idx) != 0;
+        return c.lua_next(self.raw, idx) != 0;
     }
 
     pub fn concat(self: *State, count: c_int) void {
-        c.lua_concat(self.handle, count);
+        c.lua_concat(self.raw, count);
     }
 
     pub fn rawEqual(self: *State, idx1: c_int, idx2: c_int) bool {
-        return c.lua_rawequal(self.handle, idx1, idx2) != 0;
+        return c.lua_rawequal(self.raw, idx1, idx2) != 0;
     }
 
     pub fn compare(self: *State, idx1: c_int, idx2: c_int, op: CompareOp) bool {
-        return c.lua_compare(self.handle, idx1, idx2, @backingInt(op)) != 0;
+        return c.lua_compare(self.raw, idx1, idx2, @backingInt(op)) != 0;
     }
 
     pub fn arith(self: *State, op: ArithOp) void {
-        c.lua_arith(self.handle, @backingInt(op));
+        c.lua_arith(self.raw, @backingInt(op));
     }
 
     // -----------------------------------------------------------------
@@ -619,29 +614,29 @@ pub const State = struct {
     // -----------------------------------------------------------------
 
     pub fn getMetatable(self: *State, idx: c_int) bool {
-        return c.lua_getmetatable(self.handle, idx) != 0;
+        return c.lua_getmetatable(self.raw, idx) != 0;
     }
 
     pub fn setMetatable(self: *State, idx: c_int) void {
-        _ = c.lua_setmetatable(self.handle, idx);
+        _ = c.lua_setmetatable(self.raw, idx);
     }
 
     pub fn newMetatable(self: *State, name: [:0]const u8) bool {
-        return c.luaL_newmetatable(self.handle, name.ptr) != 0;
+        return c.luaL_newmetatable(self.raw, name.ptr) != 0;
     }
 
     /// Sets the metatable named `name` on the value at the top of the stack.
     pub fn setNamedMetatable(self: *State, name: [:0]const u8) void {
-        c.luaL_setmetatable(self.handle, name.ptr);
+        c.luaL_setmetatable(self.raw, name.ptr);
     }
 
     pub fn testUserdata(self: *State, idx: c_int, name: [:0]const u8) ?*anyopaque {
-        return c.luaL_testudata(self.handle, idx, name.ptr);
+        return c.luaL_testudata(self.raw, idx, name.ptr);
     }
 
     /// Allocates userdata and returns a writable byte slice.
     pub fn newUserdata(self: *State, size: usize) []u8 {
-        const ptr = c.lua_newuserdatauv(self.handle, size, 0) orelse
+        const ptr = c.lua_newuserdatauv(self.raw, size, 0) orelse
             self.raise("out of memory");
         const bytes: [*]u8 = @ptrCast(ptr);
         return bytes[0..size];
@@ -649,22 +644,22 @@ pub const State = struct {
 
     /// Allocates userdata sized and aligned for `T`.
     pub fn newUserdataTyped(self: *State, comptime T: type) *T {
-        const ptr = c.lua_newuserdatauv(self.handle, @sizeOf(T), 0) orelse
+        const ptr = c.lua_newuserdatauv(self.raw, @sizeOf(T), 0) orelse
             self.raise("out of memory");
         return @ptrCast(@alignCast(ptr));
     }
 
     pub fn toUserdata(self: *State, comptime T: type, idx: c_int) ?*T {
-        const ptr = c.lua_touserdata(self.handle, idx) orelse return null;
+        const ptr = c.lua_touserdata(self.raw, idx) orelse return null;
         return @ptrCast(@alignCast(ptr));
     }
 
     pub fn getIUserValue(self: *State, idx: c_int, n: c_int) Type {
-        return @fromBackingInt(@intCast(c.lua_getiuservalue(self.handle, idx, n)));
+        return @fromBackingInt(@intCast(c.lua_getiuservalue(self.raw, idx, n)));
     }
 
     pub fn setIUserValue(self: *State, idx: c_int, n: c_int) Type {
-        return @fromBackingInt(@intCast(c.lua_setiuservalue(self.handle, idx, n)));
+        return @fromBackingInt(@intCast(c.lua_setiuservalue(self.raw, idx, n)));
     }
 
     // -----------------------------------------------------------------
@@ -672,12 +667,12 @@ pub const State = struct {
     // -----------------------------------------------------------------
 
     pub fn call(self: *State, nargs: c_int, nresults: c_int) void {
-        c.lua_callk(self.handle, nargs, nresults, 0, null);
+        c.lua_callk(self.raw, nargs, nresults, 0, null);
     }
 
     pub fn pcall(self: *State, nargs: c_int, nresults: c_int, error_func: c_int) Error!void {
         const status = c.lua_pcallk(
-            self.handle,
+            self.raw,
             nargs,
             nresults,
             error_func,
@@ -694,7 +689,7 @@ pub const State = struct {
         mode: ?[:0]const u8,
     ) Error!void {
         const status = c.luaL_loadbufferx(
-            self.handle,
+            self.raw,
             code.ptr,
             code.len,
             if (chunk_name) |name| name.ptr else null,
@@ -724,22 +719,22 @@ pub const State = struct {
 
     /// Loads a file and returns it as a callable handle.
     pub fn loadFile(self: *State, path: [:0]const u8) Error!Function {
-        const status = c.luaL_loadfilex(self.handle, path.ptr, null);
+        const status = c.luaL_loadfilex(self.raw, path.ptr, null);
         try statusToError(status);
         defer self.pop(1);
         return Function.fromStack(self, -1);
     }
 
     pub fn doFile(self: *State, path: [:0]const u8) Error!void {
-        const status = c.luaL_loadfilex(self.handle, path.ptr, null);
+        const status = c.luaL_loadfilex(self.raw, path.ptr, null);
         try statusToError(status);
         try self.pcall(0, 0, 0);
     }
 
     /// Raises a Lua error from a host function.
     pub fn raise(self: *State, message: []const u8) noreturn {
-        _ = c.lua_pushlstring(self.handle, message.ptr, message.len);
-        _ = c.lua_error(self.handle);
+        _ = c.lua_pushlstring(self.raw, message.ptr, message.len);
+        _ = c.lua_error(self.raw);
         unreachable;
     }
 
@@ -756,17 +751,17 @@ pub const State = struct {
     // -----------------------------------------------------------------
 
     pub fn createRef(self: *State, idx: c_int) c_int {
-        const absolute = c.lua_absindex(self.handle, idx);
-        c.lua_pushvalue(self.handle, absolute);
-        return c.luaL_ref(self.handle, registry_index);
+        const absolute = c.lua_absindex(self.raw, idx);
+        c.lua_pushvalue(self.raw, absolute);
+        return c.luaL_ref(self.raw, registry_index);
     }
 
     pub fn releaseRef(self: *State, reference: c_int) void {
-        c.luaL_unref(self.handle, registry_index, reference);
+        c.luaL_unref(self.raw, registry_index, reference);
     }
 
     pub fn pushRef(self: *State, reference: c_int) void {
-        _ = c.lua_rawgeti(self.handle, registry_index, reference);
+        _ = c.lua_rawgeti(self.raw, registry_index, reference);
     }
 
     // -----------------------------------------------------------------
@@ -803,28 +798,28 @@ pub const State = struct {
     // -----------------------------------------------------------------
 
     pub fn collectGarbage(self: *State) void {
-        _ = c.lua_gc(self.handle, c.LUA_GCCOLLECT, @as(c_int, 0));
+        _ = c.lua_gc(self.raw, c.LUA_GCCOLLECT, @as(c_int, 0));
     }
 
     pub fn stopGarbageCollector(self: *State) void {
-        _ = c.lua_gc(self.handle, c.LUA_GCSTOP, @as(c_int, 0));
+        _ = c.lua_gc(self.raw, c.LUA_GCSTOP, @as(c_int, 0));
     }
 
     pub fn restartGarbageCollector(self: *State) void {
-        _ = c.lua_gc(self.handle, c.LUA_GCRESTART, @as(c_int, 0));
+        _ = c.lua_gc(self.raw, c.LUA_GCRESTART, @as(c_int, 0));
     }
 
     pub fn garbageCollectorStep(self: *State, kilobytes: c_int) bool {
-        return c.lua_gc(self.handle, c.LUA_GCSTEP, kilobytes) != 0;
+        return c.lua_gc(self.raw, c.LUA_GCSTEP, kilobytes) != 0;
     }
 
     pub fn isGarbageCollectorRunning(self: *State) bool {
-        return c.lua_gc(self.handle, c.LUA_GCISRUNNING, @as(c_int, 0)) != 0;
+        return c.lua_gc(self.raw, c.LUA_GCISRUNNING, @as(c_int, 0)) != 0;
     }
 
     pub fn garbageCollectorCount(self: *State) usize {
-        const kb = c.lua_gc(self.handle, c.LUA_GCCOUNT, @as(c_int, 0));
-        const bytes = c.lua_gc(self.handle, c.LUA_GCCOUNTB, @as(c_int, 0));
+        const kb = c.lua_gc(self.raw, c.LUA_GCCOUNT, @as(c_int, 0));
+        const bytes = c.lua_gc(self.raw, c.LUA_GCCOUNTB, @as(c_int, 0));
         return @as(usize, @intCast(kb)) * 1024 + @as(usize, @intCast(bytes));
     }
 };
@@ -846,7 +841,7 @@ pub const Ref = struct {
         self.push();
         return .{
             .state = self.state,
-            .index = c.luaL_ref(self.state.handle, registry_index),
+            .index = c.luaL_ref(self.state.raw, registry_index),
         };
     }
 

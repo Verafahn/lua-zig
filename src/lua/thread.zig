@@ -20,12 +20,12 @@ pub const Thread = struct {
 
     /// Creates a coroutine whose body is `function`.
     pub fn create(state: *lua.State, function: lua.Function) lua.Error!Thread {
-        const handle = lua.c.lua_newthread(state.handle) orelse return error.OutOfMemory;
+        const handle = lua.c.lua_newthread(state.raw) orelse return error.OutOfMemory;
         defer state.pop(1);
 
         const thread = try Thread.fromStack(state, -1);
         function.push();
-        lua.c.lua_xmove(state.handle, handle, 1);
+        lua.c.lua_xmove(state.raw, handle, 1);
         return thread;
     }
 
@@ -66,14 +66,14 @@ pub const Thread = struct {
 
         self.push();
         main.insert(-(nargs + 1));
-        lua.c.lua_xmove(main.handle, handle, nargs);
+        lua.c.lua_xmove(main.raw, handle, nargs);
         main.pop(1);
 
         var nresults: c_int = 0;
-        const resume_status = lua.c.lua_resume(handle, main.handle, nargs, &nresults);
+        const resume_status = lua.c.lua_resume(handle, main.raw, nargs, &nresults);
 
         if (resume_status == lua.c.LUA_OK or resume_status == lua.c.LUA_YIELD) {
-            lua.c.lua_xmove(handle, main.handle, nresults);
+            lua.c.lua_xmove(handle, main.raw, nresults);
             return .{
                 .status = if (resume_status == lua.c.LUA_OK) .ok else .yield,
                 .nresults = nresults,
@@ -81,7 +81,7 @@ pub const Thread = struct {
         }
 
         // Lua leaves the error object on the coroutine's stack.
-        lua.c.lua_xmove(handle, main.handle, 1);
+        lua.c.lua_xmove(handle, main.raw, 1);
         try lua.statusToError(resume_status);
         unreachable;
     }

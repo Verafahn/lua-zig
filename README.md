@@ -6,12 +6,11 @@ The bindings are wrapped in an idiomatic Zig API (`State`, `Table`, `Function`, 
 
 ```sh
 zig build                              # install liblua, lua, luac, headers
-zig build uninstall                    # remove installed files
 zig build test                         # C smoke test + Zig wrapper tests
 zig build run -- -e 'print(_VERSION)'  # extra args are passed to the interpreter
 zig build run -- script.lua
 zig build exp                          # build and run the embedding example
-zig build -Doptimize=ReleaseFast       # optimized build
+zig build -Doptimize=fast              # optimized build
 zig build --help                       # full list of steps and options
 ```
 
